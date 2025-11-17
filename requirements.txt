@@ -1,0 +1,6 @@
+streamlit
+pdfplumber
+pandas
+supabase
+python-dotenv
+pillow
