@@ -311,7 +311,7 @@ link[rel="shortcut icon"] { display: none !important; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("📄 PDF Extractor → Mapping → History => POC - Data Extraction from PDF")
+st.title("POC - Data Extraction from PDF")
 
 # Initialize session state flags (prevent duplicate inserts)
 if 'uploaded_once' not in st.session_state:
