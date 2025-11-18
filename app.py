@@ -7,6 +7,13 @@ from typing import Any
 from datetime import datetime
 import uuid
 from supabase import create_client, Client
+import os
+from pathlib import Path
+
+# Create upload directory
+UPLOAD_DIR = Path("uploaded")
+UPLOAD_DIR.mkdir(exist_ok=True)
+
 
 # -----------------------------
 # Initialize Supabase
@@ -284,7 +291,27 @@ def filter_null_values(data: list[dict]) -> list[dict]:
 # Streamlit app UI
 # -----------------------------
 st.set_page_config(page_title="PDF → Mapping → History", page_icon="📄", layout="wide")
-st.title("📄 PDF Extractor → Mapping → History")
+
+st.markdown("""
+<style>
+/* Hide Streamlit Main Menu */
+#MainMenu {visibility: hidden;}
+
+/* Hide Streamlit header */
+header {visibility: hidden;}
+
+/* Hide footer */
+footer {visibility: hidden;}
+
+/* Hide top-right menu (...) */
+button[title="Open the menu"] {display: none !important;}
+
+/* Hide favicon */
+link[rel="shortcut icon"] { display: none !important; }
+</style>
+""", unsafe_allow_html=True)
+
+st.title("📄 PDF Extractor → Mapping → History => POC - Data Extraction from PDF")
 
 # Initialize session state flags (prevent duplicate inserts)
 if 'uploaded_once' not in st.session_state:
@@ -305,7 +332,14 @@ with tabs[0]:
     st.header("Upload PDF")
     uploaded_file = st.file_uploader("Choose a PDF file", type=["pdf"], help="Upload a PDF to extract and map")
 
-    extraction_type = st.radio("Extraction type:", options=["Tables", "Text", "Both"], horizontal=True)
+    saved_pdf_path = None
+    if uploaded_file:
+        saved_pdf_path = UPLOAD_DIR / uploaded_file.name
+        with open(saved_pdf_path, "wb") as f:
+            f.write(uploaded_file.getbuffer())
+
+    # extraction_type = st.radio("Extraction type:", options=["Tables", "Text", "Both"], horizontal=True)
+    extraction_type = "Tables"
 
     # Reset the uploaded_once flag only when a new file is uploaded (filename changed)
     if uploaded_file:
@@ -391,21 +425,16 @@ with tabs[0]:
                 left_col, right_col = st.columns(2)
 
                 with left_col:
-                    st.subheader("📋 Extracted Data Preview")
-                    if all_data["pages"]:
-                        for page in all_data["pages"][:3]:
-                            with st.expander(f"Page {page['page_number']}", expanded=page['page_number'] == 1):
-                                if "tables" in page:
-                                    st.write(f"**Tables found:** {len(page['tables'])}")
-                                    for table in page["tables"]:
-                                        st.write(f"Table {table['table_number']}:")
-                                        st.dataframe(pd.DataFrame(table["data"]), use_container_width=True)
-                                if "text" in page:
-                                    st.text_area(f"Text from page {page['page_number']}", page["text"], height=200, key=f"text_{page['page_number']}")
-                        if len(all_data["pages"]) > 3:
-                            st.info(f"Showing first 3 pages. All pages are included in the downloadable JSON.")
+                    st.subheader("📘 Mapped Data (Key → Value Table)")
+
+                    if mapped_json_obj:
+                        # Convert mapped JSON into key-value table
+                        mapped_items = [{"Key": k, "Value": v} for k, v in mapped_json_obj.items()]
+                        df_mapped = pd.DataFrame(mapped_items)
+
+                        st.dataframe(df_mapped, use_container_width=True)
                     else:
-                        st.warning("No data extracted to preview.") 
+                        st.info("No mapped data available.")
 
                 with right_col:
                     st.subheader("🔄 Mapped JSON (mapping_v1 output)")
@@ -495,10 +524,10 @@ with tabs[1]:
         # ---------------------------
         # TABLE HEADER
         # ---------------------------
-        header_cols = st.columns([2, 2, 1, 1, 1, 1, 1, 1])
+        header_cols = st.columns([2, 2, 1, 1, 1, 1, 1])
         headers = [
             "Filename", "Uploaded At", "Pages", "Tables",
-            "Mapped Keys", "Raw JSON", "Mapped JSON", "Delete"
+            "Mapped Keys", "Extract Data", "Delete"
         ]
         for col, h in zip(header_cols, headers):
             col.markdown(f"**{h}**")
@@ -509,24 +538,55 @@ with tabs[1]:
         # TABLE ROWS
         # ---------------------------
         for row in rows:
-            c1, c2, c3, c4, c5, c6, c7, c8 = st.columns([2, 2, 1, 1, 1, 1, 1, 1])
+            # c1, c2, c3, c4, c5, c6, c7 = st.columns([2, 2, 1, 1, 1, 1, 1])
+            c1, c2, c3, c4, c5, c6, c7 = st.columns([2, 2, 1, 1, 1, 1, 1])
 
-            c1.write(row["filename"])
+            # PDF download on clicking filename
+            pdf_path = UPLOAD_DIR / row["filename"]
+            if pdf_path.exists():
+                with open(pdf_path, "rb") as f:
+                    pdf_bytes = f.read()
+                # Truncate filename for UI
+                display_name = row["filename"]
+                if len(display_name) > 30:
+                    short_name = display_name[:27] + "..."
+                else:
+                    short_name = display_name
+
+                # PDF Download Button with tooltip for full name
+                c1.download_button(
+                    label=short_name,
+                    help=display_name,  # full filename on hover
+                    data=pdf_bytes,
+                    file_name=row["filename"],
+                    mime="application/pdf",
+                    key=f"pdf_{row['id']}"
+                )
+                # c1.download_button(
+                #     label=row["filename"],
+                #     data=pdf_bytes,
+                #     file_name=row["filename"],
+                #     mime="application/pdf",
+                #     key=f"pdf_{row['id']}"
+                # )
+            else:
+                c1.write(row["filename"])
+
             c2.write(row["uploaded_at"])
             c3.write(row["page_count"])
             c4.write(row["table_count"])
             c5.write(row["mapped_keys"])
 
             # RAW DOWNLOAD
-            c6.download_button(
-                "⬇",
-                data=json.dumps(row["raw_json"], ensure_ascii=False),
-                file_name=f"{row['filename'].split('.')[0]}_raw.json",
-                key=f"raw_{row['id']}",
-            )
+            # c6.download_button(
+            #     "⬇",
+            #     data=json.dumps(row["raw_json"], ensure_ascii=False),
+            #     file_name=f"{row['filename'].split('.')[0]}_raw.json",
+            #     key=f"raw_{row['id']}",
+            # )
 
             # MAPPED DOWNLOAD
-            c7.download_button(
+            c6.download_button(
                 "⬇",
                 data=json.dumps(row["mapped_json"], ensure_ascii=False),
                 file_name=f"{row['filename'].split('.')[0]}_mapped.json",
@@ -534,7 +594,7 @@ with tabs[1]:
             )
 
             # DELETE ROW (SOFT DELETE)
-            if c8.button("❌", key=f"del_{row['id']}"):
+            if c7.button("❌", key=f"del_{row['id']}"):
                 supabase.table("pdf_history") \
                     .update({"is_deleted": True}) \
                     .eq("id", row["id"]) \
